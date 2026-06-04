@@ -2,7 +2,6 @@
 import logging
 from datetime import timedelta
 
-from django.contrib.auth import authenticate
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import JSONParser, MultiPartParser
@@ -100,16 +99,17 @@ class LoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Authenticate
-        user = authenticate(request, username=email, password=password)
-
-        if user is None:
+        # Check the password directly so inactive-but-real accounts can still
+        # receive the correct verification/deactivation response below.
+        if not user_obj.check_password(password):
             user_obj.failed_login_count += 1
             if user_obj.failed_login_count >= self.LOCKOUT_THRESHOLD:
                 user_obj.account_locked_until = timezone.now() + timedelta(minutes=self.LOCKOUT_MINUTES)
                 logger.warning("Account locked: %s | IP: %s", email, ip)
             user_obj.save(update_fields=["failed_login_count", "account_locked_until"])
             return Response({"detail": "Invalid credentials."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        user = user_obj
 
         # Email verification gate
         if not user.is_email_verified:
@@ -214,13 +214,12 @@ class ResendVerifyEmailView(APIView):
             return Response({"message": msg}, status=status.HTTP_200_OK)
 
         if user.is_email_verified:
-            return Response({"detail": "This email is already verified."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"message": msg}, status=status.HTTP_200_OK)
 
         try:
             send_verification_email(user)
         except Exception as exc:
             logger.error("Resend verify email failed for %s: %s", email, exc)
-            return Response({"detail": "Failed to send email. Try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response({"message": msg}, status=status.HTTP_200_OK)
 
@@ -247,6 +246,8 @@ class ForgotPasswordView(APIView):
             logger.info("Password reset email sent: %s", email)
         except CustomUser.DoesNotExist:
             pass  # Intentionally silent — prevents enumeration
+        except Exception as exc:
+            logger.error("Password reset email failed for %s: %s", email, exc)
 
         return Response(
             {"message": "If an account with this email exists, a password reset link has been sent."},

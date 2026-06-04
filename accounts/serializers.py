@@ -95,6 +95,9 @@ class UserLoginSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
 
+    MAX_PROFILE_IMAGE_SIZE = 2 * 1024 * 1024
+    ALLOWED_PROFILE_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
     class Meta:
         model = CustomUser
         fields = [
@@ -104,6 +107,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id", "email", "is_email_verified", "date_joined", "full_name",
         ]
+
+    def validate_profile_image(self, value):
+        if value.size > self.MAX_PROFILE_IMAGE_SIZE:
+            raise serializers.ValidationError("Profile image must be 2MB or smaller.")
+
+        content_type = getattr(value, "content_type", None)
+        if content_type not in self.ALLOWED_PROFILE_IMAGE_TYPES:
+            raise serializers.ValidationError(
+                "Profile image must be a JPEG, PNG, or WEBP file."
+            )
+
+        return value
 
 
 # ── Password management ────────────────────────────────────────────────────
